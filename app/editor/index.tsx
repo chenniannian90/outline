@@ -209,6 +209,13 @@ type State = {
 };
 
 /**
+ * The minimum time between refreshes of the React tree scheduled by the
+ * editor, so sustained bursts of transactions (e.g. IME composition or
+ * collaboration updates) cannot trigger them at full frame rate.
+ */
+const FORCE_UPDATE_MIN_INTERVAL = 50;
+
+/**
  * The shared editor at the root of all rich editable text in Outline. Do not
  * use this component directly, it should by lazy loaded. Use
  * ~/components/Editor instead.
@@ -261,6 +268,9 @@ export class Editor extends React.PureComponent<
   private cachedSerializer?: MarkdownSerializer;
   private cachedParser?: MarkdownParser;
   private cachedPasteParser?: MarkdownParser;
+  private forceUpdateTimeout: ReturnType<typeof setTimeout> | null = null;
+  private forceUpdateRaf: number | null = null;
+  private lastForceUpdateAt = 0;
   nodes: { [name: string]: NodeSpec };
   marks: { [name: string]: MarkSpec };
   commands: Record<string, CommandFactory>;
@@ -390,6 +400,14 @@ export class Editor extends React.PureComponent<
 
   public componentWillUnmount(): void {
     window.removeEventListener("theme-changed", this.dispatchThemeChanged);
+    if (this.forceUpdateTimeout) {
+      clearTimeout(this.forceUpdateTimeout);
+      this.forceUpdateTimeout = null;
+    }
+    if (this.forceUpdateRaf) {
+      cancelAnimationFrame(this.forceUpdateRaf);
+      this.forceUpdateRaf = null;
+    }
     this.view?.destroy();
     this.mutationObserver?.disconnect();
     this.handleEditorDestroy();
@@ -629,11 +647,10 @@ export class Editor extends React.PureComponent<
 
         self.handleEditorInit();
 
-        self.calculateDir();
-
-        // Because Prosemirror and React are not linked we must tell React that
-        // a render is needed whenever the Prosemirror state changes.
-        self.forceUpdate();
+        // calculateDir (getComputedStyle) and forceUpdate are both deferred
+        // to the debounced callback below — calling them synchronously on every
+        // keystroke forces a reflow and blocks ProseMirror's DOM update.
+        self.scheduleForceUpdate();
       },
     });
 
@@ -726,6 +743,45 @@ export class Editor extends React.PureComponent<
 
     if (this.state.isRTL !== isRTL) {
       this.setState({ isRTL });
+    }
+  };
+
+  /**
+   * Debounced forceUpdate — instead of synchronously re-rendering React on every
+   * ProseMirror transaction (which blocks the input pipeline on large documents),
+   * schedule a refresh onto the next animation frame so ProseMirror's DOM update
+   * and the React tree land in the same frame. Both calculateDir (which calls
+   * getComputedStyle and forces a reflow) and forceUpdate (which re-renders all
+   * Widgets) are deferred to that frame. The minimum interval keeps sustained
+   * bursts of transactions (e.g. IME composition or collaboration updates) from
+   * refreshing at full frame rate. Animation frames do not run while the tab is
+   * hidden, so a pending frame also acts as a flush on returning to the tab.
+   */
+  private scheduleForceUpdate = () => {
+    if (this.forceUpdateTimeout !== null || this.forceUpdateRaf !== null) {
+      return;
+    }
+
+    const run = () => {
+      this.forceUpdateRaf = null;
+      this.lastForceUpdateAt = Date.now();
+      if (this.view?.isDestroyed) {
+        return;
+      }
+      this.calculateDir();
+      this.forceUpdate();
+    };
+
+    const elapsed = Date.now() - this.lastForceUpdateAt;
+    if (elapsed < FORCE_UPDATE_MIN_INTERVAL) {
+      // Within the minimum interval of the last refresh – wait out the
+      // remainder before catching the next frame.
+      this.forceUpdateTimeout = setTimeout(() => {
+        this.forceUpdateTimeout = null;
+        this.forceUpdateRaf = requestAnimationFrame(run);
+      }, FORCE_UPDATE_MIN_INTERVAL - elapsed);
+    } else {
+      this.forceUpdateRaf = requestAnimationFrame(run);
     }
   };
 
@@ -1184,8 +1240,8 @@ const StyledEditorContainer = styled(Styles)<{
         }
       }
       a#comment-${props.focusedCommentId}
-      ~ span.component-image
-      div.image-wrapper {
+        ~ span.component-image
+        div.image-wrapper {
         outline: ${props.theme.commentedImageOutlineDark} solid 2px;
       }
     `}
@@ -1202,8 +1258,8 @@ const StyledEditorContainer = styled(Styles)<{
         }
       }
       a#comment-${props.hoveredCommentId}
-      ~ span.component-image
-      div.image-wrapper {
+        ~ span.component-image
+        div.image-wrapper {
         outline: ${props.theme.commentedImageOutlineDark} solid 2px;
       }
     `}
@@ -1216,11 +1272,9 @@ const StyledEditorContainer = styled(Styles)<{
         background: ${props.theme.textHighlight};
 
         &.ProseMirror-selectednode {
-          outline-color: ${
-            props.readOnly
-              ? "transparent"
-              : darken(0.2, props.theme.textHighlight)
-          };
+          outline-color: ${props.readOnly
+            ? "transparent"
+            : darken(0.2, props.theme.textHighlight)};
         }
       }
     `}

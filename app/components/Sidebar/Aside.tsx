@@ -104,6 +104,9 @@ function Aside({ children, border, className, skipInitialAnimation }: Props) {
     exit: {
       width: 0,
       opacity: 0,
+      // Close instantly — animating the width down to zero keeps reflowing
+      // the document on every frame while the panel contents unmount.
+      transition: { duration: 0 },
     },
   };
 
@@ -167,7 +170,15 @@ const Sidebar = styled(m.div)<{
   `}
 
   ${breakpoint("tablet")`
-    position: relative;
+    // Overlay the right sidebar instead of reserving layout width. Reserving
+    // width (position: relative) shrinks the editor on open/close, which forces
+    // a full reflow of every block on very large documents and makes toggling
+    // the comments/history panel feel janky. Positioning out of flow keeps the
+    // editor width stable so open/close only animates the sidebar itself.
+    position: absolute;
+    top: 0;
+    inset-inline-end: 0;
+    bottom: 0;
   `}
 `;
 

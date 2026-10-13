@@ -131,13 +131,13 @@ type PaneProps = {
   children: React.ReactNode;
 };
 
-const Pane = ({
+const Pane = function Pane({
   pane,
   isFocused,
   style,
   resizeBorder,
   children,
-}: PaneProps) => {
+}: PaneProps) {
   const { t } = useTranslation();
   const isSecondary = pane === "secondary";
   const contextValue = React.useMemo(
@@ -171,18 +171,7 @@ const Pane = ({
       <SplitViewContext.Provider value={contextValue}>
         <DocumentContextProvider>
           <RightSidebarProvider>
-            <PaneContent>
-              <React.Suspense
-                fallback={
-                  <CenteredContent>
-                    <PlaceholderDocument />
-                  </CenteredContent>
-                }
-              >
-                {children}
-              </React.Suspense>
-            </PaneContent>
-            <PaneAside />
+            <PaneBody>{children}</PaneBody>
             <FocusRing
               $visible={isFocused}
               $secondary={isSecondary}
@@ -195,6 +184,39 @@ const Pane = ({
     </PaneContainer>
   );
 };
+
+/**
+ * Renders the pane's content and sidebar inside the pane's
+ * RightSidebarProvider, so that the sidebar's width is read from the pane's
+ * own state when reserving space on the content. Reading the context in Pane
+ * itself would see the application-level provider, which is never populated
+ * in a split view.
+ */
+const PaneBody = observer(function PaneBody({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const { ui } = useStores();
+  const rightSidebar = useRightSidebarContent();
+
+  return (
+    <>
+      <PaneContent $rightSidebarWidth={rightSidebar ? ui.sidebarRightWidth : 0}>
+        <React.Suspense
+          fallback={
+            <CenteredContent>
+              <PlaceholderDocument />
+            </CenteredContent>
+          }
+        >
+          {children}
+        </React.Suspense>
+      </PaneContent>
+      <PaneAside />
+    </>
+  );
+});
 
 /**
  * Renders the pane's right sidebar content, such as document comments or
@@ -294,7 +316,7 @@ const PaneContainer = styled.div<{ $secondary: boolean }>`
   padding-inline-start: ${(props) => (props.$secondary ? "8px" : "0")};
 `;
 
-const PaneContent = styled.div`
+const PaneContent = styled.div<{ $rightSidebarWidth?: number }>`
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -302,6 +324,10 @@ const PaneContent = styled.div`
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+
+  /* The right sidebar overlays the pane, so reserve its width in one shot
+   * (no transition) to keep the document, header, and TOC out from under it. */
+  padding-inline-end: ${(props) => props.$rightSidebarWidth ?? 0}px;
 
   /* Route content fills the pane, as it would the window outside of a split
    * view, so that sticky footers sit at the bottom of the pane. */

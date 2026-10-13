@@ -59,6 +59,7 @@ function Layout({
               $isResizing={ui.sidebarIsResizing}
               $sidebarCollapsed={sidebarCollapsed}
               $hasSidebar={showSidebar}
+              $rightSidebarWidth={sidebarRight ? ui.sidebarRightWidth : 0}
               style={
                 sidebarCollapsed
                   ? undefined
@@ -89,6 +90,7 @@ type ContentProps = {
   $isResizing?: boolean;
   $sidebarCollapsed?: boolean;
   $hasSidebar?: boolean;
+  $rightSidebarWidth?: number;
   theme: DefaultTheme;
 };
 
@@ -99,6 +101,7 @@ const Content = styled(Flex)<ContentProps>`
 
   @media print {
     margin: 0 !important;
+    padding-inline-end: 0 !important;
   }
 
   ${breakpoint("mobile", "tablet")`
@@ -110,6 +113,12 @@ const Content = styled(Flex)<ContentProps>`
       props.$hasSidebar &&
       props.$sidebarCollapsed &&
       `margin-inline-start: ${props.theme.sidebarCollapsedWidth}px;`}
+
+    /* The right sidebar overlays the content, so reserve its width in one
+     * shot (no transition) to keep the document, header, and TOC out from
+     * under it. This intentionally reflows only once per open/close. */
+    padding-inline-end: ${(props: ContentProps) =>
+      props.$rightSidebarWidth ?? 0}px;
   `};
 `;
 
